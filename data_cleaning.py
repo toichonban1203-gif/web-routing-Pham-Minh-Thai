@@ -3,7 +3,8 @@
 PHẦN 2 — DATA CLEANING & VALIDATION
 ===================================
 Đọc file đầu vào, ánh xạ cột (semantic mapping), chuẩn hóa số/ngày/địa chỉ,
-geocoding, kiểm tra hợp lệ từng thực thể (xe, kho, sản phẩm, đơn hàng) và
+geocoding, kiểm tra hợp lệ từng thực thể (xe, kho, sản phẩm, đơn hàng),
+phân loại hàng BBS A/B & Tỉnh/Thành phố (Orders Solving), và
 nạp dữ liệu đã chuẩn hóa cho bước tối ưu.
 
 Phụ thuộc: config  →  optimization (chỉ lấy hàm haversine để kiểm tra geocode).
@@ -25,8 +26,9 @@ from rapidfuzz import fuzz
 from unidecode import unidecode
 
 from .config import (
-    ALERT_TABLE, BASE_DIR, FIELDS, INPUT_MODES, NONE, PRODUCT_NUMERIC, TYPE_TABLE,
-    VEHICLE_NUMERIC, VIETNAM_BOUNDS, Config, UserError,
+    ALERT_TABLE, BASE_DIR, FIELDS, INPUT_MODES, NONE, PRODUCT_NUMERIC,
+    PRODUCT_FIELDS, OUT_SOLVING, TYPE_TABLE, VEHICLE_NUMERIC,
+    VIETNAM_BOUNDS, Config, UserError,
 )
 from .optimization import haversine
 
@@ -287,6 +289,17 @@ def address_quality(address):
     return min(score, 1.0), "✅ Hợp lệ"
 
 
+def extract_province(address_str: str) -> str:
+    if is_blank(address_str): return "Chưa xác định"
+    parts = [p.strip() for p in str(address_str).split(",")]
+    if len(parts) >= 2:
+        prov = parts[-1]
+        if "Việt Nam" in prov or "Vietnam" in prov:
+            prov = parts[-2] if len(parts) >= 3 else parts[-1]
+        return prov.strip()
+    return "Hà Nội" if "Hà Nội" in address_str or "ha noi" in norm_basic(address_str) else "Tỉnh khác"
+
+
 @st.cache_resource(show_spinner=False)
 def get_geocoder():
     try: return ArcGIS(user_agent="smart-logistics-warehouse/1.0", timeout=10)
@@ -390,11 +403,13 @@ def warehouse_validate_output(df):
 
 
 # ============================================================================
-# 2.7c  PRODUCT — chuẩn hóa & kiểm tra
+# 2.7c  PRODUCT — chuẩn hóa & kiểm tra 3D (Length, Width, Height, Volume)
 # ============================================================================
 def process_product(rec):
     out = {f: ("" if is_blank(rec.get(f)) else str(rec.get(f)).strip()) for f in ["product_id", "product_name"]}
     for f in PRODUCT_NUMERIC: out[f] = parse_num(rec.get(f))
+    # Tự động tính thể tích volume_m3 từ length_cm, width_cm, height_cm
+    out["volume_m3"] = round((out["length_cm"] * out["width_cm"] * out["height_cm"]) / 1_000_000.0, 6)
     out["trạng_thái"] = "✅ Hợp lệ"
     return out
 
@@ -451,7 +466,9 @@ def process_order_with_geocode(raw, do_geocode=True):
 
     items_str = str(raw.get("items", "")).strip()
     if not items_str or items_str == "nan":
-        items_str = "Hàng tiêu chuẩn"
+        items_str = "SP_01"
+
+    province = extract_province(cleaned_addr)
 
     return {
         "order_id": str(raw.get("order_id", "")),
@@ -462,6 +479,7 @@ def process_order_with_geocode(raw, do_geocode=True):
         "total_weight_kg": round(w or 0.0, 4),
         "total_volume_m3": round(v or 0.0, 6),
         "address": cleaned_addr,
+        "province": province,
         "lat": lat,
         "lng": lng,
         "trạng_thái_geocode": geo_status,
@@ -492,7 +510,72 @@ def is_hanoi_address(addr_str: str) -> bool:
 
 
 # ============================================================================
-# 2.8  NẠP DỮ LIỆU ĐÃ CHUẨN HÓA CHO BƯỚC ĐỊNH TUYẾN
+# 2.7e  ORDERS SOLVING — Level Up Phân Loại Hàng BBS A/B & Thống Kê Tỉnh Thành
+# ============================================================================
+def run_orders_solving(df_orders: pd.DataFrame, df_products: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Quét mã sản phẩm (items) từ Tab Orders khớp với DIM_PRODUCT.xlsx để lấy kích thước Dài, Rộng, Cao.
+    Tính Volumetric Weight = (Dài x Rộng x Cao) * quantity / 4000.
+    So sánh Volumetric Weight với total_weight_kg:
+      - Nếu Volumetric Weight > total_weight_kg -> Loại A (Cồng kềnh - BBS)
+      - Ngược lại -> Loại B (Hàng nặng)
+    Đồng thời phân tích gom nhóm đơn theo Tỉnh/Thành phố.
+    """
+    if df_orders.empty: return pd.DataFrame(), pd.DataFrame()
+
+    prod_map = {}
+    if df_products is not None and not df_products.empty and "product_id" in df_products.columns:
+        for _, pr in df_products.iterrows():
+            prod_map[str(pr["product_id"]).strip()] = {
+                "l": float(pr.get("length_cm", 0.0)),
+                "w": float(pr.get("width_cm", 0.0)),
+                "h": float(pr.get("height_cm", 0.0))
+            }
+
+    solved_rows = []
+    for _, r in df_orders.iterrows():
+        row_dict = dict(r)
+        item_id = str(r.get("items", "")).strip()
+        qty = int(r.get("quantity", 1))
+        real_weight = float(r.get("total_weight_kg", 0.0))
+
+        dim = prod_map.get(item_id, {"l": 50.0, "w": 40.0, "h": 30.0})
+        l, w, h = dim["l"], dim["w"], dim["h"]
+
+        # Công thức: Volumetric Weight = (Dài x Rộng x Cao) * quantity / 4000
+        volumetric_weight = ((l * w * h) * qty) / 4000.0
+
+        row_dict["length_cm"] = l
+        row_dict["width_cm"] = w
+        row_dict["height_cm"] = h
+        row_dict["volumetric_weight_kg"] = round(volumetric_weight, 2)
+
+        if volumetric_weight > real_weight:
+            row_dict["BBS_type"] = "Loại A (Cồng kềnh - BBS)"
+            row_dict["BBS_code"] = "A"
+        else:
+            row_dict["BBS_type"] = "Loại B (Hàng nặng)"
+            row_dict["BBS_code"] = "B"
+
+        solved_rows.append(row_dict)
+
+    df_solved = pd.DataFrame(solved_rows)
+
+    prov_summary = (df_solved.groupby("province")
+                    .agg(total_orders=("order_id", "count"),
+                         total_weight=("total_weight_kg", "sum"),
+                         total_volume=("total_volume_m3", "sum"),
+                         bbs_a_count=("BBS_code", lambda x: (x == "A").sum()),
+                         bbs_b_count=("BBS_code", lambda x: (x == "B").sum()))
+                    .reset_index()
+                    .sort_values("total_orders", ascending=False))
+
+    prov_summary["ratio_%"] = round(prov_summary["total_orders"] / len(df_solved) * 100, 1)
+    return df_solved, prov_summary
+
+
+# ============================================================================
+# 2.8  NẠP DỮ LIỆU ĐÃ CHUẨN HÓA CHO BƯỚC ĐỊNH TUYẾN (Routing Flexible Input)
 # ============================================================================
 def read_matrix(path: str) -> pd.DataFrame:
     df = read_dim_file(path, index_col=0).copy()
@@ -536,10 +619,18 @@ def load_customers(cfg: Config) -> dict:
     return out
 
 
-def load_orders(cfg: Config, notes: list) -> list:
-    df = read_dim_file(cfg.order_file)
+def load_orders_flexible(cfg: Config, source_df: pd.DataFrame = None) -> tuple[list, list]:
+    notes = []
+    if source_df is not None and not source_df.empty:
+        df = source_df.copy()
+        notes.append("⚡ Sử dụng dữ liệu đơn hàng phân loại trực tiếp từ Session State / Orders Solving.")
+    else:
+        df = read_dim_file(cfg.order_file)
+        notes.append("📂 Đọc dữ liệu từ file đĩa `DIM_ORDERS.xlsx`.")
+
     for c in ("order_id", "customer_id", "order_date"):
-        if c not in df.columns: raise UserError(f"DIM_ORDERS.xlsx thiếu cột `{c}`.")
+        if c not in df.columns: raise UserError(f"Dữ liệu đơn hàng thiếu cột `{c}`.")
+
     orders, skipped = [], 0
     for _, r in df.iterrows():
         oid, cid, dstr = ("" if is_blank(r.get(k)) else str(r[k]).strip() for k in ("order_id", "customer_id", "order_date"))
@@ -551,35 +642,52 @@ def load_orders(cfg: Config, notes: list) -> list:
         lng = float(r["lng"]) if pd.notna(r.get("lng")) else None
         qty = int(parse_qty(r.get("quantity")) or 1)
         items_str = "" if is_blank(r.get("items")) else str(r["items"]).strip()
+        province_str = "" if is_blank(r.get("province")) else str(r["province"]).strip()
+        bbs_code = "" if is_blank(r.get("BBS_code")) else str(r["BBS_code"]).strip()
 
         orders.append({
             "order_id": oid, "customer_id": cid, "order_type": otype if otype in ("B2B", "B2C") else "B2C",
             "quantity": qty,
-            "items": items_str or "Hàng tiêu chuẩn",
+            "items": items_str or "SP_01",
             "total_weight_kg": parse_qty(r.get("total_weight_kg")), "total_volume_m3": parse_qty(r.get("total_volume_m3"), dot_is_decimal=True),
             "address": "" if is_blank(r.get("address")) else str(r["address"]),
+            "province": province_str,
+            "BBS_code": bbs_code,
             "lat": lat, "lng": lng,
             "alert_status": "Normal" if is_blank(r.get("alert_status")) else str(r["alert_status"]),
             "order_status": "" if is_blank(r.get("order_status")) else str(r["order_status"]),
             "order_date": d_iso,
         })
     if skipped: notes.append(f"Bỏ qua {skipped} đơn thiếu order_id / customer_id hoặc order_date sai định dạng.")
-    return orders
+    return orders, notes
 
 
-def load_data(cfg: Config) -> dict:
-    notes = []
+def load_data_flexible(cfg: Config, source_df: pd.DataFrame = None) -> dict:
     veh = load_vehicles(cfg)
     wh_coords = load_warehouse_coords(cfg)
+    orders, notes = load_orders_flexible(cfg, source_df)
+
     if not wh_coords:
         wh_coords = {"WH_DEFAULT": (21.0285, 105.8542)}
         notes.append("Chưa có tọa độ kho (Tab 2) → dùng kho mặc định Hà Nội.")
     warehouses = {w: {"lat": la, "lng": lo, "name": w} for w, (la, lo) in wh_coords.items()}
     orphan = sorted(set(veh["id_warehouse"]) - set(warehouses))
     if orphan: notes.append(f"Xe thuộc kho không có tọa độ: {', '.join(orphan)}.")
+
     return {"vehicles": veh,
             "dist": read_matrix(cfg.matrix_file) if os.path.exists(cfg.matrix_file) else pd.DataFrame(),
-            "cust": load_customers(cfg), "warehouses": warehouses, "orders": load_orders(cfg, notes), "notes": notes}
+            "cust": load_customers(cfg), "warehouses": warehouses, "orders": orders, "notes": notes}
+
+
+# Compatible alias function for legacy imports
+def load_orders(cfg: Config, notes: list) -> list:
+    orders, n_notes = load_orders_flexible(cfg)
+    notes.extend(n_notes)
+    return orders
+
+
+def load_data(cfg: Config) -> dict:
+    return load_data_flexible(cfg)
 
 
 # ============================================================================
