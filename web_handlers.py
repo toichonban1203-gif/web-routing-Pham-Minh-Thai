@@ -501,7 +501,7 @@ def render_routing_tab():
         planner, days, kpis, total_cost = simulate_all(data, cfg)
         st.session_state["t6_temp_plan"] = {"planner": planner, "days": days, "kpis": kpis, "cfg": cfg, "data": data}
         st.session_state.pop("t6_final_plan", None)
-        st.success("✅ Đã chạy xong bước tạm thời! Mời phân công tài xế & xe 3PL phía dưới.")
+        st.success("✅ Đã chạy xong bước tạm thời! Mời xem 3 bảng phân loại bên dưới.")
 
     plan = st.session_state.get("t6_temp_plan")
     if not plan: return
@@ -521,14 +521,57 @@ def render_routing_tab():
     g[0].metric("Tổng số tuyến được phân", len(tagged))
     g[1].metric("Tổng số đơn đã phân tuyến", routed_orders_count)
 
-    rdf_temp = routes_to_df(tagged, planner.wh, cfg)
-    cols_to_show = [c for c in rdf_temp.columns if c not in ("TÀI XẾ CHÍNH", "PHỤ XE")]
-    st.dataframe(rdf_temp[cols_to_show], hide_index=True)
+    # ------------------------------------------------------------------------
+    # PHÂN LOẠI THÀNH 3 DANH SÁCH RIÊNG BIỆT
+    # ------------------------------------------------------------------------
+    tagged_inhouse = []      # Xe nhà
+    tagged_saving = []       # Xe 3PL Tiết kiệm
+    tagged_3pl_full = []     # Xe 3PL Full & Tách chuyến
+
+    for item in tagged:
+        r, kind = item
+        is_ext = r.get("external", False)
+        v_id = str(r.get("vehicle_id", "")).upper()
+        r_kind = r.get("kind", "")
+
+        if not is_ext and r_kind != "SPLIT":
+            tagged_inhouse.append(item)
+        elif is_ext and "FULL" not in v_id:
+            tagged_saving.append(item)
+        else:
+            tagged_3pl_full.append(item)
+
+    rdf_inhouse = routes_to_df(tagged_inhouse, planner.wh, cfg) if tagged_inhouse else pd.DataFrame()
+    rdf_saving = routes_to_df(tagged_saving, planner.wh, cfg) if tagged_saving else pd.DataFrame()
+    rdf_3pl_full = routes_to_df(tagged_3pl_full, planner.wh, cfg) if tagged_3pl_full else pd.DataFrame()
+
+    cols_to_show = lambda df: [c for c in df.columns if c not in ("TÀI XẾ CHÍNH", "PHỤ XE")]
+
+    # --- BẢNG 1: XE NHÀ ---
+    st.markdown(f"### 🚚 Bảng 1: Tuyến do Đội Xe Nhà Thực Hiện ({len(tagged_inhouse)} tuyến)")
+    if not rdf_inhouse.empty:
+        st.dataframe(rdf_inhouse[cols_to_show(rdf_inhouse)], hide_index=True, use_container_width=True)
+    else:
+        st.info("Không có tuyến nào do xe nhà thực hiện.")
+
+    # --- BẢNG 2: 3PL TIẾT KIỆM ---
+    st.markdown(f"### 🟢 Bảng 2: Tuyến Giao bởi 3PL Tiết Kiệm (Loại 1 / Loại 2) ({len(tagged_saving)} tuyến)")
+    if not rdf_saving.empty:
+        st.dataframe(rdf_saving[cols_to_show(rdf_saving)], hide_index=True, use_container_width=True)
+    else:
+        st.info("Không có tuyến nào thuộc diện 3PL Tiết kiệm.")
+
+    # --- BẢNG 3: 3PL FULL & TÁCH CHUYẾN ---
+    st.markdown(f"### 🟣 Bảng 3: Tuyến Cần Thuê Ngoài 3PL Full & Tách Chuyến ({len(tagged_3pl_full)} chuyến)")
+    if not rdf_3pl_full.empty:
+        st.dataframe(rdf_3pl_full[cols_to_show(rdf_3pl_full)], hide_index=True, use_container_width=True)
+    else:
+        st.info("Không có chuyến nào cần thuê 3PL Full hoặc Tách chuyến.")
 
     st.divider()
     st.markdown("## 👨‍✈️ 2. PHÂN CÔNG TÀI XẾ CÔNG TY CHO CÁC XE NHÀ HOẠT ĐỘNG TRONG NGÀY")
 
-    inhouse_routes = [r for r, _ in tagged if not r["external"]]
+    inhouse_routes = [r for r, _ in tagged_inhouse]
 
     veh_grouped = {}
     for r in inhouse_routes:
@@ -603,7 +646,7 @@ def render_routing_tab():
     st.divider()
     st.markdown("## 🚛 3. NHẬP LIỆU ĐỘI XE THUÊ NGOÀI (3PL FULL & TÁCH CHUYẾN)")
 
-    full_3pl_routes = [r for r, _ in tagged if (r["external"] and "FULL" in str(r.get("vehicle_id", "")).upper()) or r["kind"] == "SPLIT"]
+    full_3pl_routes = [r for r, _ in tagged_3pl_full]
 
     user_3pl_inputs = []
     if not full_3pl_routes:
@@ -795,245 +838,4 @@ def handle_cargo_damaged(order_id):
     return f"[{dt.datetime.now():%H:%M:%S}] 💔 [CARGO DAMAGED] Hàng bị móp méo/hư hỏng. Tài xế chụp ảnh hiện trạng, cách ly hàng và báo kho đền bù."
 
 def handle_cargo_missing(order_id):
-    return f"[{dt.datetime.now():%H:%M:%S}] ❓ [CARGO MISSING] Thất thoát hàng so với phiếu kho. Đối chiếu dữ liệu quét Barcode cửa kho, lập biên bản đền bù."
-
-def handle_wrong_loading(vehicle_id):
-    return f"[{dt.datetime.now():%H:%M:%S}] 🔄 [RE-ARRANGE CARGO] Lỗi LIFO xếp sai vị trí hàng. Sắp xếp lại thùng hàng tại điểm dừng để dỡ đúng thứ tự."
-
-def handle_vehicle_disconnect(vehicle_id):
-    return f"[{dt.datetime.now():%H:%M:%S}] 🔌 [DISCONNECT ALERT] Xe mất kết nối IoT. Tạm ngừng điều phối tự động, gọi điện thoại xác thực trực tiếp tài xế."
-
-def handle_route6_full(order_id):
-    return f"[{dt.datetime.now():%H:%M:%S}] 📦 [ROUTE FULL] Tuyến hết chỗ chứa. Kiểm tra đẩy đơn `{order_id}` sang Xe 3PL Thuê ngoài hoặc dời ca sau."
-
-def handle_no_backup_vehicle():
-    return f"[{dt.datetime.now():%H:%M:%S}] 🚚 [NO BACKUP FLEET] Hết sạch xe nhà dự phòng. Quét các xe đang chạy còn trống không gian để ghép đơn (Co-loading)."
-
-def handle_route7_overload():
-    return f"[{dt.datetime.now():%H:%M:%S}] ⚠️ [CASCADE OVERLOAD] Chuyển đơn làm tuyến kế quá tải. Hủy phương án chuyển tuyến, tính giải pháp thuê ngoài."
-
-def handle_cost_too_high():
-    return f"[{dt.datetime.now():%H:%M:%S}] 💰 [COST EXCEEDED] Chi phí xử lý quá tốn kém. So sánh chi phí đền bù giao trễ vs thuê ngoài để chọn option rẻ nhất."
-
-def handle_driver_timeout(driver_id):
-    return f"[{dt.datetime.now():%H:%M:%S}] ⏳ [MAX HOURS REACHED] Tài xế `{driver_id}` sắp hết 8h làm việc. Điều xe khác đến đổi ca/bàn giao phần đơn còn lại."
-
-def handle_area_mismatch():
-    return f"[{dt.datetime.now():%H:%M:%S}] 🧭 [AREA MISMATCH] Xe còn chỗ nhưng lệch khu vực. Khóa không ghép đơn nếu quãng đường rỗng (Deadhead) > 10km."
-
-def handle_no_feasible_eta():
-    return f"[{dt.datetime.now():%H:%M:%S}] 🚨 [ETA IMPOSSIBLE] Không phương án nào kịp giờ giao. Cảnh báo tổng đài viên gọi điện đàm phán lại khung giờ với khách."
-
-def handle_redelivery_cost_limit():
-    return f"[{dt.datetime.now():%H:%M:%S}] 🛑 [REDELIVERY COST CEILING] Chi phí giao lại vượt ngưỡng. Chuyển đơn về điểm bưu cục gần nhất cho khách tự đến lấy."
-
-def handle_map_data_conflict():
-    return f"[{dt.datetime.now():%H:%M:%S}] 🧐 [DATA CONFLICT] Tài xế báo tắc đường nhưng GIS báo thông thoáng. Yêu cầu gửi ảnh chụp thực địa xác minh."
-
-def handle_duplicate_assignment(order_id):
-    return f"[{dt.datetime.now():%H:%M:%S}] 🔒 [RACE CONDITION] 2 tài xế cùng nhận đơn `{order_id}`. Khóa phiên bản điều phối, chỉ giữ 1 lệnh hợp lệ đầu tiên."
-
-def handle_driver_unconfirmed():
-    return f"[{dt.datetime.now():%H:%M:%S}] 🔔 [UNCONFIRMED COMMAND] Tài xế không bấm xác nhận lệnh. Phát chuông cảnh báo 3 phút, sau đó chuyển Điều phối thủ công."
-
-def handle_driver_ignore_new_route():
-    return f"[{dt.datetime.now():%H:%M:%S}] ⚠️ [ROUTE DEVIATION] Tài xế đã nhận lệnh nhưng vẫn chạy đường cũ. So sánh GPS với tuyến mới và phát chuông nhắc nhở."
-
-def handle_order_canceled_midway(order_id):
-    return f"[{dt.datetime.now():%H:%M:%S}] 🚫 [CANCEL MIDWAY] Đơn `{order_id}` bị hủy khi đang re-route. Lập tức hủy tác vụ tính toán, báo tài xế quay đầu."
-
-def handle_infinite_loop_incident():
-    return f"[{dt.datetime.now():%H:%M:%S}] 🔄 [LOOP DETECTED] Sự cố lặp lại >3 lần. Giới hạn số lần re-route, yêu cầu Trưởng ca điều hành can thiệp thủ công."
-
-def handle_invalid_order_data():
-    return f"[{dt.datetime.now():%H:%M:%S}] ❌ [INVALID DATA] Dữ liệu đơn hàng thiếu m3/kg. Tạm loại đơn khỏi thuật toán tối ưu và gửi ticket sửa dữ liệu."
-
-def handle_solver_timeout():
-    return f"[{dt.datetime.now():%H:%M:%S}] ⏱️ [ENGINE TIMEOUT] Thuật toán Clarke-Wright quá tải/Timeout. Giữ kế hoạch hợp lệ gần nhất và báo lỗi Engine."
-
-
-INCIDENT_SOLVERS = {
-    "road_blocked": ("1. Đường bị chặn hoàn toàn", handle_road_blocked),
-    "heavy_traffic": ("2. Tắc nghẽn giao thông nghiêm trọng", handle_heavy_traffic),
-    "truck_ban": ("3. Đường cấm xe tải", handle_truck_ban),
-    "flooded_road": ("4. Đường ngập nước", lambda o, v, d: handle_flooded_road()),
-    "short_blockage": ("5. Đường chặn ngắn hạn tạm thời", lambda o, v, d: handle_short_blockage()),
-    "driver_lost": ("6. Tài xế đi nhầm đường", lambda o, v, d: handle_driver_lost(d)),
-    "gps_lost": ("7. GPS mất tín hiệu", lambda o, v, d: handle_gps_lost()),
-    "change_address": ("8. Khách đổi địa chỉ phút chót", handle_customer_change_address),
-    "cust_no_answer": ("9. Khách không nghe điện thoại", handle_cust_no_answer),
-    "cust_absent": ("10. Khách không có mặt", handle_cust_absent),
-    "cust_reject": ("11. Khách từ chối nhận hàng", handle_cust_reject),
-    "cust_request_late": ("12. Khách hẹn giao muộn hơn", handle_cust_request_late),
-    "cust_request_early": ("13. Khách yêu cầu giao sớm hơn", handle_cust_request_early),
-    "change_recipient": ("14. Thay đổi người nhận hàng", handle_change_recipient),
-    "partial_delivery": ("15. Yêu cầu giao một phần", handle_partial_delivery),
-    "address_not_found": ("16. Không tìm thấy địa chỉ", handle_address_not_found),
-    "truck_breakdown": ("17. Xe hỏng giữa đường", lambda o, v, d: handle_truck_breakdown(v)),
-    "out_of_fuel": ("18. Xe hết nhiên liệu", lambda o, v, d: handle_out_of_fuel(v)),
-    "traffic_accident": ("19. Xe gặp tai nạn", lambda o, v, d: handle_traffic_accident(v)),
-    "vehicle_overload": ("20. Xe quá tải do sai dữ liệu", handle_vehicle_overload),
-    "cargo_damaged": ("21. Hàng hóa bị hư hỏng", handle_cargo_damaged),
-    "cargo_missing": ("22. Hàng hóa bị thiếu", handle_cargo_missing),
-    "wrong_loading": ("23. Hàng xếp sai vị trí trên xe", lambda o, v, d: handle_wrong_loading(v)),
-    "vehicle_disconnect": ("24. Xe mất kết nối IoT", lambda o, v, d: handle_vehicle_disconnect(v)),
-    "route6_full": ("25. Xe Tuyến hết chỗ chứa", handle_route6_full),
-    "no_backup_vehicle": ("26. Không còn xe dự phòng", lambda o, v, d: handle_no_backup_vehicle()),
-    "route7_overload": ("27. Chuyển đơn làm tuyến kế quá tải", lambda o, v, d: handle_route7_overload()),
-    "cost_too_high": ("28. Phương án xử lý quá tốn kém", lambda o, v, d: handle_cost_too_high()),
-    "driver_timeout": ("29. Tài xế sắp hết giờ làm việc", lambda o, v, d: handle_driver_timeout(d)),
-    "area_mismatch": ("30. Xe còn chỗ nhưng lệch khu vực", lambda o, v, d: handle_area_mismatch()),
-    "no_feasible_eta": ("31. Không phương án nào kịp giờ giao", lambda o, v, d: handle_no_feasible_eta()),
-    "redelivery_cost_limit": ("32. Chi phí giao lại vượt ngưỡng", lambda o, v, d: handle_redelivery_cost_limit()),
-    "map_data_conflict": ("33. Xung đột báo cáo bản đồ", lambda o, v, d: handle_map_data_conflict()),
-    "duplicate_assignment": ("34. Trùng lặp 2 tài xế nhận đơn", handle_duplicate_assignment),
-    "driver_unconfirmed": ("35. Tài xế không xác nhận lệnh mới", lambda o, v, d: handle_driver_unconfirmed()),
-    "driver_ignore_new_route": ("36. Tài xế chạy sai tuyến mới", lambda o, v, d: handle_driver_ignore_new_route()),
-    "order_canceled_midway": ("37. Đơn bị hủy khi đang re-route", handle_order_canceled_midway),
-    "infinite_loop_incident": ("38. Sự cố lặp lại nhiều lần", lambda o, v, d: handle_infinite_loop_incident()),
-    "invalid_order_data": ("39. Dữ liệu đơn hàng không hợp lệ", lambda o, v, d: handle_invalid_order_data()),
-    "solver_timeout": ("40. Engine tối ưu bị Timeout/Lỗi", lambda o, v, d: handle_solver_timeout()),
-}
-
-
-def render_incident_tab():
-    st.header("🚨 7. TRUNG TÂM ĐIỀU HÀNH THỰC ĐỊA & XỬ LÝ SỰ CỐ")
-    st.caption("🌐 *Liên kết trực tiếp với dữ liệu Đơn hàng (Tab 4/5) & Hạm đội xe (Tab 1)*")
-
-    orders_res = st.session_state.get("orders_solving_result") or st.session_state.get("orders_result")
-    fleet_res = st.session_state.get("fleet_result")
-
-    order_options = orders_res["df"]["order_id"].tolist() if orders_res else ["ORD_003", "ORD_001", "ORD_002"]
-    vehicle_options = fleet_res["df"]["vehicle_id"].tolist() if fleet_res else ["VEH_06", "VEH_01", "VEH_02"]
-    driver_options = ["DRV_06", "DRV_01", "DRV_02", "Tài xế dự phòng"]
-
-    if "live_logs" not in st.session_state:
-        st.session_state["live_logs"] = [
-            {"Thời gian": f"{dt.datetime.now():%Y-%m-%d %H:%M:%S}", "Mã Xe": "VEH_06", "Tài Xế": "DRV_06",
-             "Đang Giao Đơn": "ORD_003", "Vị Trí Hiện Tại": "Kho Tổng Depot Hà Nội",
-             "Trạng Thái": "Đang xuất kho", "Ghi Chú": "Chuẩn bị giao đơn #03 trên Tuyến 6"}
-        ]
-
-    col_solver, col_form = st.tabs(["🛠️ 1. Kích Hoạt Python Incident Solvers", "📡 2. Báo Cáo Thực Địa & Live Tracking Logs"])
-
-    with col_solver:
-        st.markdown("### ⚡ Kích Hoạt Tự Động Giải Quyết Sự Cố Thực Địa")
-        c1, c2 = st.columns([1.2, 2])
-
-        with c1:
-            st.markdown("##### 📌 Tùy chọn đối tượng liên quan:")
-            sel_order = st.selectbox("Chọn Mã Đơn Hàng (Order ID)", order_options, key="t7_sel_ord")
-            sel_vehicle = st.selectbox("Chọn Mã Xe (Vehicle ID)", vehicle_options, key="t7_sel_veh")
-            sel_driver = st.selectbox("Chọn Mã Tài Xế (Driver ID)", driver_options, key="t7_sel_drv")
-
-            st.markdown("##### 🚨 Chọn Sự Cố Thực Tế Bị Báo:")
-            solver_labels = {k: v[0] for k, v in INCIDENT_SOLVERS.items()}
-            sel_incident_key = st.selectbox(
-                "Danh mục 40 sự cố ngoại lệ",
-                list(solver_labels.keys()),
-                format_func=lambda x: solver_labels[x],
-                key="t7_sel_inc"
-            )
-
-            btn_run_solver = st.button("🚀 Run Tự Động", type="primary", key="btn_run_solver")
-
-        with c2:
-            st.markdown("##### 🖥️ Màn Hình Log Tự Động Thực Thi (Execution Console)")
-            console_placeholder = st.empty()
-
-            if btn_run_solver:
-                solver_tuple = INCIDENT_SOLVERS[sel_incident_key]
-                func = solver_tuple[1]
-
-                try:
-                    res_msg = func(sel_order, sel_vehicle, sel_driver)
-                except TypeError:
-                    try:
-                        res_msg = func(sel_order)
-                    except TypeError:
-                        res_msg = func()
-
-                console_placeholder.code(res_msg, language="markdown")
-
-                new_log = {
-                    "Thời gian": f"{dt.datetime.now():%Y-%m-%d %H:%M:%S}",
-                    "Mã Xe": sel_vehicle,
-                    "Tài Xế": sel_driver,
-                    "Đang Giao Đơn": sel_order,
-                    "Vị Trí Hiện Tại": "Toạ độ phát sinh sự cố",
-                    "Trạng Thái": "Gặp sự cố / Đã re-route",
-                    "Ghi Chú": f"Auto Solver [{sel_incident_key}]: {res_msg.split('] ')[-1]}"
-                }
-                st.session_state["live_logs"].insert(0, new_log)
-                st.toast("✅ Đã xử lý sự cố & cập nhật vào Live Logs!", icon="🎉")
-            else:
-                console_placeholder.info("👈 Chọn loại sự cố bên trái và nhấn nút 'Run Python Solver' để xem kết quả xử lý tự động.")
-
-    with col_form:
-        st.markdown("### ✍️ Biểu Mẫu Nhập Báo Cáo Thực Địa Từ Tài Xế / Nhân Viên")
-
-        f1, f2 = st.columns([1, 1.5])
-        with f1:
-            in_veh = st.selectbox("Mã Xe (Vehicle ID)", vehicle_options, key="t7_f_veh")
-            in_drv = st.selectbox("Mã Tài Xế (Driver ID)", driver_options, key="t7_f_drv")
-            in_ord = st.selectbox("Mã Đơn Hàng (Order ID)", order_options, key="t7_f_ord")
-            in_loc = st.text_input("Vị Trí Hiện Tại", value="Đường Cổ Linh, Hà Nội", key="t7_f_loc")
-            in_status = st.selectbox("Trạng Thái Tuyến", ["Đang xuất kho Depot", "Đang trên đường giao hàng", "Đã giao thành công", "Gặp sự cố / Tạm dừng"], key="t7_f_st")
-            in_note = st.text_area("Ghi Chú Thực Địa", placeholder="Ví dụ: Khách hẹn 10 phút nữa xuống nhận...", key="t7_f_note")
-
-            btn_submit_report = st.button("📤 Gửi Báo Cáo Về Hệ Thống", key="btn_sub_rep")
-
-            if btn_submit_report:
-                rep_log = {
-                    "Thời gian": f"{dt.datetime.now():%Y-%m-%d %H:%M:%S}",
-                    "Mã Xe": in_veh,
-                    "Tài Xế": in_drv,
-                    "Đang Giao Đơn": in_ord,
-                    "Vị Trí Hiện Tại": in_loc,
-                    "Trạng Thái": in_status,
-                    "Ghi Chú": in_note or "Không có ghi chú"
-                }
-                st.session_state["live_logs"].insert(0, rep_log)
-                st.success("✅ Đã cập nhật nhật ký thực địa thành công!")
-                st.rerun()
-
-        with f2:
-            st.markdown("##### 📊 Bảng Giám Sát Thời Gian Thực (Live Logs)")
-            logs_df = pd.DataFrame(st.session_state["live_logs"])
-            st.dataframe(logs_df, hide_index=True, use_container_width=True)
-
-
-TAB_NAMES = [
-    "🚚 1. Fleet",
-    "🏭 2. Warehouse",
-    "📦 3. Product",
-    "🧾 4. Orders",
-    "🧩 5. Orders Solving",
-    "🗺️ 6. Routing",
-    "🚨 7. Xử Lý Sự Cố"
-]
-
-TAB_ROUTES = [
-    render_fleet_tab,
-    render_warehouse_tab,
-    render_product_tab,
-    render_orders_tab,
-    render_orders_solving_tab,
-    render_routing_tab,
-    render_incident_tab,
-]
-
-
-def main():
-    st.title("🚚 Smart Logistics — Hệ thống chuẩn hóa & Điều phối Vận tải (PHẠM MINH THÁI)")
-    with st.sidebar:
-        st.markdown("### ℹ️ Menu Điều hướng")
-        if st.button("🧹 Giải phóng RAM & Cache", key="free_ram"):
-            st.cache_data.clear()
-            for k in list(st.session_state):
-                if k.endswith(("_raw", "_result", "_meta", "_why", "_auto_table", "_plan", "_temp_plan", "_final_plan")):
-                    st.session_state.pop(k, None)
-            st.rerun()
-    for tab, render in zip(st.tabs(TAB_NAMES), TAB_ROUTES):
-        with tab:
-            render()
+    return f"[{dt.datetime.now():%H:%M:%S}] ❓
