@@ -31,6 +31,7 @@ OUT_FLEET = os.path.join(BASE_DIR, "output_fleet")
 OUT_WAREHOUSE = os.path.join(BASE_DIR, "output_warehouse")
 OUT_PRODUCT = os.path.join(BASE_DIR, "output_product")
 OUT_ORDERS = os.path.join(BASE_DIR, "output_orders")
+OUT_SOLVING = os.path.join(BASE_DIR, "output_solving")
 OUT_CUSTOMER = os.path.join(BASE_DIR, "output_customer")
 OUT_MATRIX = os.path.join(BASE_DIR, "output_matrix")
 
@@ -77,16 +78,18 @@ WAREHOUSE_FIELDS = {
     "address": ["địa chỉ", "địa điểm", "address", "location", "vị trí"],
 }
 
-# --- Product -----------------------------------------------------------------
+# --- Product (Cập nhật Kích thước 3D & Thể tích) -----------------------------
 PRODUCT_FIELDS = {
     "product_id": ["mã sản phẩm", "product id", "sku", "item code", "mã sp", "code", "id"],
     "product_name": ["tên sản phẩm", "product name", "item name", "tên sp", "name"],
-    "volume": ["thể tích", "volume", "m3", "cbm"],
+    "length_cm": ["chiều dài", "dài", "length", "length_cm", "dài (cm)"],
+    "width_cm": ["chiều rộng", "rộng", "width", "width_cm", "rộng (cm)"],
+    "height_cm": ["chiều cao", "cao", "height", "height_cm", "cao (cm)"],
     "weight": ["trọng lượng", "weight", "kg"],
     "cost_price": ["giá sản xuất", "cost price", "cost"],
     "selling_price": ["giá bán", "selling price", "price"],
 }
-PRODUCT_NUMERIC = ["volume", "weight", "cost_price", "selling_price"]
+PRODUCT_NUMERIC = ["length_cm", "width_cm", "height_cm", "weight", "cost_price", "selling_price"]
 
 # --- Orders ------------------------------------------------------------------
 _ORDER_RAW = {
@@ -98,6 +101,7 @@ _ORDER_RAW = {
     "total_weight_kg": dict(aliases=["trọng lượng", "weight", "kg"]),
     "total_volume_m3": dict(aliases=["thể tích", "volume", "m3"]),
     "address": dict(aliases=["địa chỉ", "address", "destination", "location", "vị trí"]),
+    "province": dict(aliases=["tỉnh", "thành phố", "province", "tỉnh/thành"]),
     "order_status": dict(aliases=["trạng thái", "status"]),
     "order_type": dict(aliases=["loại đơn", "order type", "channel"]),
     "alert_status": dict(aliases=["cảnh báo", "alert", "priority"]),
