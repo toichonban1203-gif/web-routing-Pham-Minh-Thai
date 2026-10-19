@@ -524,20 +524,28 @@ def render_routing_tab():
     # ------------------------------------------------------------------------
     # PHÂN LOẠI THÀNH 3 DANH SÁCH RIÊNG BIỆT
     # ------------------------------------------------------------------------
-    tagged_inhouse = []      # Xe nhà
-    tagged_saving = []       # Xe 3PL Tiết kiệm
-    tagged_3pl_full = []     # Xe 3PL Full & Tách chuyến
+    # ------------------------------------------------------------------------
+    # PHÂN LOẠI 3 BẢNG CHUẨN XÁC
+    # ------------------------------------------------------------------------
+    tagged_inhouse = []      # Bảng 1: Xe nhà
+    tagged_saving = []       # Bảng 2: 3PL Tiết kiệm
+    tagged_3pl_full = []     # Bảng 3: 3PL Full & Tách chuyến
 
     for item in tagged:
         r, kind = item
         is_ext = r.get("external", False)
         v_id = str(r.get("vehicle_id", "")).upper()
-        r_kind = r.get("kind", "")
+        r_kind = str(r.get("kind", "")).upper()
 
+        # 1. Xe nhà chạy bình thường (Không thuê ngoài, không tách chuyến)
         if not is_ext and r_kind != "SPLIT":
             tagged_inhouse.append(item)
-        elif is_ext and "FULL" not in v_id:
+        
+        # 2. Xe 3PL Tiết kiệm (Chứa chữ SAVING hoặc Tiết kiệm)
+        elif is_ext and ("SAVING" in v_id or "TIẾT KIỆM" in str(r.get("outsourcing_type", "")).upper()):
             tagged_saving.append(item)
+            
+        # 3. Xe 3PL Full hoặc Tách chuyến (SPLIT)
         else:
             tagged_3pl_full.append(item)
 
