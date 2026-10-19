@@ -2,24 +2,16 @@
 """
 PHẦN 3 — CORE OPTIMIZATION
 ==========================
-Lõi thuật toán định tuyến: Clarke-Wright (savings) + 2-opt, kiểm tra ràng buộc
-tải trọng / quãng đường / thời gian, và phân loại thuê ngoài 3PL.
-
-Module này KHÔNG phụ thuộc streamlit, chỉ cần pandas + config, nên có thể
-import và unit-test độc lập mà không cần chạy giao diện.
 """
 from __future__ import annotations
 
 import datetime as dt
 import math
-
 import pandas as pd
 
-from .config import CFG, OC_DEFAULTS, Config
+from config import CFG, OC_DEFAULTS, Config
 
-# ============================================================================
-# 3.1  TIỆN ÍCH HÌNH HỌC & THỜI GIAN
-# ============================================================================
+
 def haversine(lat1, lng1, lat2, lng2) -> float:
     p1, p2 = math.radians(lat1), math.radians(lat2)
     a = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lng2 - lng1) / 2) ** 2
@@ -47,9 +39,6 @@ def service_rules_from_cfg(cfg: Config) -> dict:
     return base
 
 
-# ============================================================================
-# 3.2  PHÂN LOẠI & CHI PHÍ THUÊ NGOÀI 3PL
-# ============================================================================
 def _full_cls(w, v, oc, why=None):
     fw = max(float(oc.get("full_vehicle_max_weight_kg", 10000.0)), 1e-9)
     fv = max(float(oc.get("full_vehicle_max_volume_m3", 40.0)), 1e-9)
@@ -77,9 +66,6 @@ def classify_outsourcing(excess_w, excess_v, oc=None, force_full=False) -> dict:
     return _full_cls(w, v, oc, "bắt buộc thuê Full" if force_full else None)
 
 
-# ============================================================================
-# 3.3  RÀNG BUỘC VẬN TẢI & THỜI GIAN
-# ============================================================================
 def evaluate_transportation_constraints(route_or_order, df_vehicles, vehicle_available_counts, outsourcing_config):
     oc = {**OC_DEFAULTS, **(outsourcing_config or {})}
     total_w = float(route_or_order.get("total_weight_kg", 0.0))
@@ -146,9 +132,6 @@ def evaluate_time_constraints(route_or_order, chosen_vehicle=None, service_time_
             "message": f"⚠️ Tuyến vượt quá {max_hours:g} giờ ({round(total, 2)}h > {max_hours:g}h)! Cắt theo Units."}
 
 
-# ============================================================================
-# 3.4  ROUTE PLANNER (Clarke-Wright + 2-opt + dispatch)
-# ============================================================================
 _TAB_A_EVENTS = {
     "NO_FLEET": ("HIGH", "KHO KHÔNG CÓ XE", "Bổ sung xe cho kho"),
     "OUTSOURCE_FULL": ("CRITICAL", "VƯỢT TỔNG HẠM ĐỘI", "Cần xe 3PL Full"),
@@ -179,7 +162,6 @@ class RoutePlanner:
         for rec in self.veh.to_dict("records"): self._fleet.setdefault(rec["id_warehouse"], []).append(rec)
         for lst in self._fleet.values(): lst.sort(key=lambda r: (r["max_weight_kg"], r["max_volume_m3"]))
 
-    # ------------------------------------------------------------------ khoảng cách
     def _hav(self, a, b) -> float:
         return haversine(a["lat"], a["lng"], b["lat"], b["lng"]) * self.detour
 
@@ -201,7 +183,6 @@ class RoutePlanner:
         if not route: return 0.0
         return self.d_wc(wh_id, route[0]) + self.d_wc(wh_id, route[-1]) + sum(self.d_cc(a, b) for a, b in zip(route, route[1:]))
 
-    # ------------------------------------------------------------------ xe & chỉ số tuyến
     def caps(self, wh_id):
         lst = self._fleet.get(wh_id)
         if not lst: return self.max_w, self.max_v, self.max_dist
@@ -242,7 +223,6 @@ class RoutePlanner:
             return float(classify_outsourcing(m["w"], m["v"], self.cfg.outsourcing)["cost"])
         return float(veh.get("fixed_cost", 0.0)) + float(veh.get("variable_cost", 0.0)) * m["km"]
 
-    # ------------------------------------------------------------------ 2-opt
     def two_opt(self, route, wh_id):
         def edge(a, b):
             if a is None: return self.d_wc(wh_id, b)
@@ -264,7 +244,6 @@ class RoutePlanner:
                     if cand_km < base - 1e-9: best, base, improved = cand, cand_km, True
         return best
 
-    # ------------------------------------------------------------------ Clarke-Wright
     def savings_list(self, custs, wh_id):
         out = [(self.d_wc(wh_id, a) + self.d_wc(wh_id, b) - self.d_cc(a, b), a, b)
                for k, a in enumerate(custs) for b in custs[k + 1:]]
@@ -290,7 +269,6 @@ class RoutePlanner:
         v = sum(demand[c]["volume"] for c in route)
         return (-float(classify_outsourcing(w, v, self.cfg.outsourcing)["cost"]), -self.km(route, wh_id))
 
-    # ------------------------------------------------------------------ nhu cầu & cắt đơn
     def _demand(self, ords):
         demand, by_cust = {}, {}
         for o in ords:
@@ -327,7 +305,6 @@ class RoutePlanner:
             cap_w = float(vrow["max_weight_kg"]) if vrow is not None else float(cls.get("cap_w", 10000.0))
             return min(m["w"] / cap_w, 1.0) if cap_w > 0 else 0.0
 
-    # ------------------------------------------------------------------ tạo tuyến thuê ngoài
     def _outsource_route(self, custs, wh_id, demand, by_cust, cls, events, date_str, km=None, reason=None):
         cfg = self.cfg
         if km is None:
@@ -357,7 +334,6 @@ class RoutePlanner:
             "start": start, "end": start + dt.timedelta(hours=hours), "hours": hours, "events": events,
         }
 
-    # ------------------------------------------------------------------ dispatch: gán xe, kiểm ràng buộc, cắt đơn
     def _dispatch(self, route, wh_id, demand, by_cust, veh_counts, date_str, veh_free=None):
         cfg, oc = self.cfg, self.cfg.outsourcing
         veh_free = {} if veh_free is None else veh_free
@@ -465,7 +441,6 @@ class RoutePlanner:
             out.append(self._outsource_route(ids, wh_id, demand, by_cust, cls, ev, date_str, reason=reason_cut_str))
         return out
 
-    # ------------------------------------------------------------------ lập kế hoạch 1 ngày
     def plan_day(self, date_str: str, day_orders: list) -> dict:
         cfg = self.cfg
         res = {"routes": [], "overdue_routes": [], "unrouted_orders": [], "exceptions": [], "day_cost": 0.0, "orders": list(day_orders)}
@@ -501,9 +476,6 @@ class RoutePlanner:
         return res
 
 
-# ============================================================================
-# 3.5  MÔ PHỎNG TOÀN BỘ CÁC NGÀY + KPI
-# ============================================================================
 def route_total(r):
     return r["fixed_cost"] + r["variable_cost"] + r["overnight_cost"] + r.get("driver_cost", 0) + r.get("outsourcing_cost", 0)
 
@@ -515,7 +487,6 @@ def simulate_all(data: dict, cfg: Config = CFG):
     days = {d: planner.plan_day(d, by_date[d]) for d in sorted(by_date)}
     all_r = [r for d in days.values() for r in d["routes"] + d["overdue_routes"]]
 
-    # 🌟 TÍNH TỈ LỆ LẤP ĐẦY TRUNG BÌNH CHỈ TRÊN XE NHÀ 🌟
     inhouse_only_routes = [r for r in all_r if not r["external"]]
     avg_load_factor = (sum(r["load_factor"] for r in inhouse_only_routes) / len(inhouse_only_routes)) if inhouse_only_routes else 0.0
 
