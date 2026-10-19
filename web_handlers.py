@@ -2,16 +2,6 @@
 """
 PHẦN 4 — WEB ROUTES & FORM HANDLERS
 ===================================
-Toàn bộ giao diện Streamlit:
-  • 4.1  Component dùng chung (nhập liệu, mapping cột, hiển thị kết quả)
-  • 4.2  Tab 1–4   : Fleet / Warehouse / Product / Orders (form + handler)
-  • 4.3  Tab 5     : Orders Solving (Phân loại BBS A/B & Thống kê Tỉnh thành)
-  • 4.4  Tab 6     : Dashboard định tuyến Clarke-Wright
-  • 4.5  Tab 7     : Trung tâm xử lý sự cố (incident solvers + live logs)
-  • 4.6  Router    : main() — điều hướng giữa các tab
-
-Chỉ module này được phép gọi các lệnh ``st.*`` hiển thị; logic nghiệp vụ nằm ở
-``data_cleaning`` và ``optimization``.
 """
 from __future__ import annotations
 
@@ -23,23 +13,21 @@ import re
 import pandas as pd
 import streamlit as st
 
-from .config import (
+from config import (
     BASE_DIR, FIELDS, INPUT_MODES, LICENSE_LIST, LICENSE_RANKS, NONE, OUT_CUSTOMER, OUT_FLEET,
     OUT_ORDERS, OUT_PRODUCT, OUT_SOLVING, OUT_WAREHOUSE, PRODUCT_FIELDS, UPLOAD_TYPES, VEHICLE_FIELDS,
     WAREHOUSE_FIELDS, XLSX_MIME, Config, UserError,
 )
-from .data_cleaning import (
+from data_cleaning import (
     basic_semantic_mapping, build_colmap, fleet_profile_score, fleet_validate_output, get_input,
     is_hanoi_address, load_data_flexible, load_warehouse_coords, mem_kb, optimize_dtypes,
     orders_semantic_mapping, orders_validate_output, pick, process_order_with_geocode,
     process_product, process_vehicle, process_warehouse, product_validate_output, read_any,
     read_dim_file, require_files, run_orders_solving, save_outputs, warehouse_validate_output,
 )
-from .optimization import route_total, simulate_all
+from optimization import route_total, simulate_all
 
-# ============================================================================
-# 4.1  COMPONENT DÙNG CHUNG
-# ============================================================================
+
 def conf_icon_ui(score):
     return "🟢" if score >= 0.75 else ("🟡" if score >= 0.55 else "🟠")
 
@@ -135,9 +123,6 @@ def render_result(prefix, title):
     return res
 
 
-# ============================================================================
-# 4.2a  TAB 1 — FLEET
-# ============================================================================
 def fleet_empty_table():
     return pd.DataFrame({
         "vehicle_id": ["VEH_01", "VEH_02", "VEH_06"],
@@ -170,9 +155,6 @@ def render_fleet_tab():
     render_result("fleet", "📊 Kết quả Hạm đội")
 
 
-# ============================================================================
-# 4.2b  TAB 2 — WAREHOUSE
-# ============================================================================
 def render_warehouse_tab():
     st.header("🏭 Kho & Tọa độ (Warehouse)")
     do_geo = st.checkbox("🌍 Bật ArcGIS Geocoding", value=True, key="wh_do_geo")
@@ -193,9 +175,6 @@ def render_warehouse_tab():
         st.map(res["df"].dropna(subset=["lat", "lng"]).rename(columns={"lng": "lon"})[["lat", "lon"]])
 
 
-# ============================================================================
-# 4.2c  TAB 3 — PRODUCT
-# ============================================================================
 def render_product_tab():
     st.header("📦 Quản lý Sản phẩm (Product)")
     mode, edited, uploaded = render_input_block("product", "sản phẩm", pd.DataFrame({"product_id": ["SP_01"], "product_name": ["Ghế Sofa"], "length_cm": [120.0], "width_cm": [80.0], "height_cm": [90.0], "weight": [25.0], "selling_price": [2500000]}))
@@ -213,9 +192,6 @@ def render_product_tab():
     render_result("product", "📊 Kết quả Sản phẩm")
 
 
-# ============================================================================
-# 4.2d  TAB 4 — ORDERS
-# ============================================================================
 def render_orders_tab():
     st.header("🧾 Quản lý Đơn hàng & Quét Tọa độ (Orders)")
     do_geo = st.checkbox("🌍 Tự động quét ArcGIS Geocoding cho Location/Address đơn hàng", value=True, key="ord_do_geo")
@@ -233,10 +209,8 @@ def render_orders_tab():
                 rows.append(process_order_with_geocode({f: row.get(c) for f, c in colmap.items()}, do_geocode=do_geo))
         out = orders_validate_output(pd.DataFrame(rows))
 
-        # 1. Lưu file tổng chuẩn DIM_ORDERS
         files = save_outputs(OUT_ORDERS, "DIM_ORDERS", "DIM_ORDERS", out)
 
-        # 2. Phân tách thành 3 bảng với cấu trúc y hệt bảng gốc
         mask_failed = out["trạng_thái_geocode"] != "✅ Thành công"
         df_failed = out[mask_failed].copy().reset_index(drop=True)
 
@@ -245,14 +219,12 @@ def render_orders_tab():
         df_hanoi = df_success[mask_hanoi].copy().reset_index(drop=True)
         df_outside = df_success[~mask_hanoi].copy().reset_index(drop=True)
 
-        # Lưu các file phụ trợ
         file_hn = save_outputs(OUT_ORDERS, "DIM_ORDERS_HA_NOI", "DIM_ORDERS_HA_NOI", df_hanoi)
         file_out = save_outputs(OUT_ORDERS, "DIM_ORDERS_OUTSIDE_HN", "DIM_ORDERS_OUTSIDE_HN", df_outside)
         file_err = save_outputs(OUT_ORDERS, "DIM_ORDERS_FAILED", "DIM_ORDERS_FAILED", df_failed)
 
         files.extend([file_hn[0], file_out[0], file_err[0]])
 
-        # Lưu thông tin Customer
         cust_df = out.dropna(subset=["lat", "lng"])[["customer_id", "customer_name", "address", "lat", "lng", "trạng_thái_geocode"]].drop_duplicates(subset=["customer_id"])
         save_outputs(OUT_CUSTOMER, "DATASET_CUSTOMER", "DATASET_CUSTOMER", cust_df)
 
@@ -318,9 +290,6 @@ def render_orders_tab():
                 cols[i % 4].download_button(f"⬇️ Tải {os.path.basename(path)}", data, file_name=os.path.basename(path), mime=mime, key=f"orders_dl_{os.path.basename(path)}_{i}")
 
 
-# ============================================================================
-# 4.2e  TAB 5 — ORDERS SOLVING (Phân loại Hàng BBS A/B & Thống Kê Tỉnh Thành MỚI)
-# ============================================================================
 def render_orders_solving_tab():
     st.header("🧩 Tab 5 — Orders Solving (Phân loại Hàng BBS A/B & Thống Kê Tỉnh Thành)")
     st.caption("Khớp mã sản phẩm từ Tab Orders với DIM_PRODUCT để lấy Dài × Rộng × Cao, tính Trọng lượng quy đổi Thể tích và Phân loại BBS A/B.")
@@ -374,9 +343,6 @@ def render_orders_solving_tab():
             st.dataframe(prov_sum, use_container_width=True)
 
 
-# ============================================================================
-# 4.3a  TAB 6 — HÀM TRÌNH BÀY KẾT QUẢ ĐỊNH TUYẾN
-# ============================================================================
 def file_status(cfg: Config) -> pd.DataFrame:
     items = [
         ("Tab 1 · Hạm đội xe", cfg.vehicle_file, "Bắt buộc"),
@@ -478,9 +444,6 @@ def routes_to_df(tagged_routes, wh_info, cfg: Config) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ============================================================================
-# 4.3b  TAB 6 — FORM THAM SỐ & DASHBOARD ĐỊNH TUYẾN
-# ============================================================================
 def render_routing_settings():
     with st.expander("⚙️ Tham số mô hình & Ngưỡng thuê ngoài Tiết kiệm", expanded=True):
         c_mode, c1, c2 = st.columns(3)
@@ -531,7 +494,6 @@ def render_routing_tab():
     if st.button("⚡ Chạy Routing Tạm Thời", type="primary", key="t6_run_temp"):
         require_files(cfg, ["orders", "fleet"])
 
-        # Đọc dữ liệu đơn hàng ưu tiên từ Tab 5 (Orders Solving) nếu có
         solved_res = st.session_state.get("orders_solving_result")
         source_df = solved_res["df"] if solved_res else None
 
@@ -568,7 +530,6 @@ def render_routing_tab():
 
     inhouse_routes = [r for r, _ in tagged if not r["external"]]
 
-    # Gom nhóm theo xe nhà để biết lịch chạy từng lần trong ngày
     veh_grouped = {}
     for r in inhouse_routes:
         vid = r["vehicle_id"]
@@ -592,7 +553,6 @@ def render_routing_tab():
 
             st.markdown(f"##### 🚚 Xe #{idx}: `{v_id}` (Kho: **{v_wh}** | Tải trọng: **{v_cap_w:,.0f} kg** | **{len(r_list)} chuyến trong ngày**)")
 
-            # --- HIỂN THỊ LỊCH TRÌNH CHẠY TRONG NGÀY ---
             st.markdown("🕒 **Lịch trình chạy thực tế trong ngày:**")
             for trip_idx, r_item in enumerate(r_list, 1):
                 start_s = f"{r_item['start']:%H:%M}"
@@ -771,9 +731,6 @@ def render_routing_tab():
         st.dataframe(final_rdf, hide_index=True)
 
 
-# ============================================================================
-# 4.4a  TAB 7 — INCIDENT HANDLERS (mỗi hàm = 1 kịch bản sự cố)
-# ============================================================================
 def handle_road_blocked(order_id):
     return f"[{dt.datetime.now():%H:%M:%S}] 🗺️ [RE-ROUTING] Đường chặn hoàn toàn. OSRM API đã vẽ lộ trình mới né điểm sạt lở cho đơn `{order_id}` (+2.4km)."
 
@@ -853,7 +810,7 @@ def handle_no_backup_vehicle():
     return f"[{dt.datetime.now():%H:%M:%S}] 🚚 [NO BACKUP FLEET] Hết sạch xe nhà dự phòng. Quét các xe đang chạy còn trống không gian để ghép đơn (Co-loading)."
 
 def handle_route7_overload():
-    return f"[{dt.datetime.now():%H:%M:%S}] ⚠️ [CASCADE OVERLOAD] Chuyển đơn làm tuyến kế tiếp gãy tải. Hủy phương án chuyển tuyến, tính giải pháp thuê ngoài."
+    return f"[{dt.datetime.now():%H:%M:%S}] ⚠️ [CASCADE OVERLOAD] Chuyển đơn làm tuyến kế quá tải. Hủy phương án chuyển tuyến, tính giải pháp thuê ngoài."
 
 def handle_cost_too_high():
     return f"[{dt.datetime.now():%H:%M:%S}] 💰 [COST EXCEEDED] Chi phí xử lý quá tốn kém. So sánh chi phí đền bù giao trễ vs thuê ngoài để chọn option rẻ nhất."
@@ -862,13 +819,13 @@ def handle_driver_timeout(driver_id):
     return f"[{dt.datetime.now():%H:%M:%S}] ⏳ [MAX HOURS REACHED] Tài xế `{driver_id}` sắp hết 8h làm việc. Điều xe khác đến đổi ca/bàn giao phần đơn còn lại."
 
 def handle_area_mismatch():
-    return f"[{dt.datetime.now():%H:%M:%S}] 🧭 [AREA MISMATCH] Xe trống nhưng lệch vùng. Khóa không ghép đơn nếu quãng đường rỗng (Deadhead) > 10km."
+    return f"[{dt.datetime.now():%H:%M:%S}] 🧭 [AREA MISMATCH] Xe còn chỗ nhưng lệch khu vực. Khóa không ghép đơn nếu quãng đường rỗng (Deadhead) > 10km."
 
 def handle_no_feasible_eta():
-    return f"[{dt.datetime.now():%H:%M:%S}] 🚨 [ETA IMPOSSIBLE] Không phương án nào kịp giờ. Cảnh báo tổng đài viên gọi điện đàm phán lại khung giờ với khách."
+    return f"[{dt.datetime.now():%H:%M:%S}] 🚨 [ETA IMPOSSIBLE] Không phương án nào kịp giờ giao. Cảnh báo tổng đài viên gọi điện đàm phán lại khung giờ với khách."
 
 def handle_redelivery_cost_limit():
-    return f"[{dt.datetime.now():%H:%M:%S}] 🛑 [REDELIVERY COST CEILING] Chi phí giao lại vượt giá trị đơn. Chuyển đơn về điểm bưu cục gần nhất cho khách tự đến lấy."
+    return f"[{dt.datetime.now():%H:%M:%S}] 🛑 [REDELIVERY COST CEILING] Chi phí giao lại vượt ngưỡng. Chuyển đơn về điểm bưu cục gần nhất cho khách tự đến lấy."
 
 def handle_map_data_conflict():
     return f"[{dt.datetime.now():%H:%M:%S}] 🧐 [DATA CONFLICT] Tài xế báo tắc đường nhưng GIS báo thông thoáng. Yêu cầu gửi ảnh chụp thực địa xác minh."
@@ -895,9 +852,6 @@ def handle_solver_timeout():
     return f"[{dt.datetime.now():%H:%M:%S}] ⏱️ [ENGINE TIMEOUT] Thuật toán Clarke-Wright quá tải/Timeout. Giữ kế hoạch hợp lệ gần nhất và báo lỗi Engine."
 
 
-# ============================================================================
-# 4.4b  TAB 7 — BẢNG ĐỊNH TUYẾN SỰ CỐ → HANDLER
-# ============================================================================
 INCIDENT_SOLVERS = {
     "road_blocked": ("1. Đường bị chặn hoàn toàn", handle_road_blocked),
     "heavy_traffic": ("2. Tắc nghẽn giao thông nghiêm trọng", handle_heavy_traffic),
@@ -942,9 +896,6 @@ INCIDENT_SOLVERS = {
 }
 
 
-# ============================================================================
-# 4.4c  TAB 7 — FORM & DASHBOARD XỬ LÝ SỰ CỐ
-# ============================================================================
 def render_incident_tab():
     st.header("🚨 7. TRUNG TÂM ĐIỀU HÀNH THỰC ĐỊA & XỬ LÝ SỰ CỐ")
     st.caption("🌐 *Liên kết trực tiếp với dữ liệu Đơn hàng (Tab 4/5) & Hạm đội xe (Tab 1)*")
@@ -1052,9 +1003,6 @@ def render_incident_tab():
             st.dataframe(logs_df, hide_index=True, use_container_width=True)
 
 
-# ============================================================================
-# 4.5  ROUTER — ĐIỀU HƯỚNG GIỮA CÁC TAB
-# ============================================================================
 TAB_NAMES = [
     "🚚 1. Fleet",
     "🏭 2. Warehouse",
