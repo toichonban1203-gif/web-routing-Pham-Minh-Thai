@@ -13,7 +13,7 @@ from config import PAGE_CONFIG
 
 st.set_page_config(**PAGE_CONFIG)
 
-from smart_logistics.web_handlers import main  # noqa: E402
+from web_handlers import main  # noqa: E402
 
 if __name__ == "__main__":
     main()
