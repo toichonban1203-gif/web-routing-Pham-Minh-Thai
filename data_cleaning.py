@@ -2,12 +2,6 @@
 """
 PHẦN 2 — DATA CLEANING & VALIDATION
 ===================================
-Đọc file đầu vào, ánh xạ cột (semantic mapping), chuẩn hóa số/ngày/địa chỉ,
-geocoding, kiểm tra hợp lệ từng thực thể (xe, kho, sản phẩm, đơn hàng),
-phân loại hàng BBS A/B & Tỉnh/Thành phố (Orders Solving), và
-nạp dữ liệu đã chuẩn hóa cho bước tối ưu.
-
-Phụ thuộc: config  →  optimization (chỉ lấy hàm haversine để kiểm tra geocode).
 """
 from __future__ import annotations
 
@@ -25,16 +19,13 @@ from geopy.geocoders import ArcGIS
 from rapidfuzz import fuzz
 from unidecode import unidecode
 
-from .config import (
+from config import (
     ALERT_TABLE, BASE_DIR, FIELDS, INPUT_MODES, NONE, PRODUCT_NUMERIC,
     PRODUCT_FIELDS, OUT_SOLVING, TYPE_TABLE, VEHICLE_NUMERIC,
     VIETNAM_BOUNDS, Config, UserError,
 )
-from .optimization import haversine
+from optimization import haversine
 
-# ============================================================================
-# 2.1  TIỆN ÍCH CHUNG
-# ============================================================================
 INT32_MIN, INT32_MAX = -2_147_483_648, 2_147_483_647
 FLOAT32_SAFE_MAX = 1e7
 KEEP_FLOAT64 = {"lat", "lng", "lon", "latitude", "longitude"}
@@ -80,9 +71,6 @@ def norm_basic(v):
     return re.sub(r"[^a-z0-9 ]+", " ", unidecode(str(v)).lower()).strip()
 
 
-# ============================================================================
-# 2.2  PARSE SỐ & NGÀY
-# ============================================================================
 def parse_num(val):
     if is_blank(val): return 0.0
     try:
@@ -124,9 +112,6 @@ def parse_date_iso(dstr: str) -> str:
     return ""
 
 
-# ============================================================================
-# 2.3  ĐỌC FILE ĐẦU VÀO
-# ============================================================================
 def _read_csv_bytes(data: bytes) -> pd.DataFrame:
     for enc in ("utf-8-sig", "cp1258", "latin-1"):
         try:
@@ -185,9 +170,6 @@ def get_input(mode, uploaded, edited, label):
     return optimize_dtypes(df)
 
 
-# ============================================================================
-# 2.4  SEMANTIC COLUMN MAPPING
-# ============================================================================
 def basic_semantic_mapping(df, fields, profile_fn, threshold):
     result, used = {}, set()
     for fld, aliases in fields.items():
@@ -227,9 +209,6 @@ def pick(row, colmap, fld, default=""):
     return row.get(colmap[fld]) if fld in colmap else default
 
 
-# ============================================================================
-# 2.5  LƯU KẾT QUẢ CHUẨN HÓA
-# ============================================================================
 def df_to_records(df: pd.DataFrame):
     tmp = df.copy()
     for c in tmp.columns[tmp.dtypes == "float32"]:
@@ -253,9 +232,6 @@ def save_outputs(out_dir, base, sheet, df, extra_sheets=None):
     return [xlsx, js]
 
 
-# ============================================================================
-# 2.6  CHUẨN HÓA ĐỊA CHỈ & GEOCODING
-# ============================================================================
 def coordinate_in_vietnam(lat, lng):
     try: lat, lng = float(lat), float(lng)
     except Exception: return False
@@ -336,9 +312,6 @@ def geocode_address(address, ref_wh_lat=21.0285, ref_wh_lng=105.8542, max_valid_
     return {"ok": False, "status": "❌ Lỗi Geocoding"}
 
 
-# ============================================================================
-# 2.7a  FLEET — chuẩn hóa & kiểm tra
-# ============================================================================
 def fleet_profile_score(series, field):
     values = series.dropna().astype(str).str.strip()
     values = values[values != ""]
@@ -372,9 +345,6 @@ def fleet_validate_output(df):
     return out
 
 
-# ============================================================================
-# 2.7b  WAREHOUSE — chuẩn hóa & kiểm tra
-# ============================================================================
 def process_warehouse(warehouse_id, address, do_geocode=True):
     raw_address = "" if is_blank(address) else str(address).strip()
     cleaned = clean_address(raw_address)
@@ -402,13 +372,9 @@ def warehouse_validate_output(df):
     return out
 
 
-# ============================================================================
-# 2.7c  PRODUCT — chuẩn hóa & kiểm tra 3D (Length, Width, Height, Volume)
-# ============================================================================
 def process_product(rec):
     out = {f: ("" if is_blank(rec.get(f)) else str(rec.get(f)).strip()) for f in ["product_id", "product_name"]}
     for f in PRODUCT_NUMERIC: out[f] = parse_num(rec.get(f))
-    # Tự động tính thể tích volume_m3 từ length_cm, width_cm, height_cm
     out["volume_m3"] = round((out["length_cm"] * out["width_cm"] * out["height_cm"]) / 1_000_000.0, 6)
     out["trạng_thái"] = "✅ Hợp lệ"
     return out
@@ -426,9 +392,6 @@ def product_validate_output(df):
     return out
 
 
-# ============================================================================
-# 2.7d  ORDERS — phân loại, chuẩn hóa & kiểm tra
-# ============================================================================
 def build_lookup(table):
     exact = {norm_basic(k): l for l, keys in table.items() for k in keys}
     return {"exact": exact, "keys": list(exact.keys())}
@@ -509,18 +472,7 @@ def is_hanoi_address(addr_str: str) -> bool:
     return "ha noi" in norm or "hanoi" in norm
 
 
-# ============================================================================
-# 2.7e  ORDERS SOLVING — Level Up Phân Loại Hàng BBS A/B & Thống Kê Tỉnh Thành
-# ============================================================================
 def run_orders_solving(df_orders: pd.DataFrame, df_products: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Quét mã sản phẩm (items) từ Tab Orders khớp với DIM_PRODUCT.xlsx để lấy kích thước Dài, Rộng, Cao.
-    Tính Volumetric Weight = (Dài x Rộng x Cao) * quantity / 4000.
-    So sánh Volumetric Weight với total_weight_kg:
-      - Nếu Volumetric Weight > total_weight_kg -> Loại A (Cồng kềnh - BBS)
-      - Ngược lại -> Loại B (Hàng nặng)
-    Đồng thời phân tích gom nhóm đơn theo Tỉnh/Thành phố.
-    """
     if df_orders.empty: return pd.DataFrame(), pd.DataFrame()
 
     prod_map = {}
@@ -542,7 +494,6 @@ def run_orders_solving(df_orders: pd.DataFrame, df_products: pd.DataFrame) -> tu
         dim = prod_map.get(item_id, {"l": 50.0, "w": 40.0, "h": 30.0})
         l, w, h = dim["l"], dim["w"], dim["h"]
 
-        # Công thức: Volumetric Weight = (Dài x Rộng x Cao) * quantity / 4000
         volumetric_weight = ((l * w * h) * qty) / 4000.0
 
         row_dict["length_cm"] = l
@@ -574,9 +525,6 @@ def run_orders_solving(df_orders: pd.DataFrame, df_products: pd.DataFrame) -> tu
     return df_solved, prov_summary
 
 
-# ============================================================================
-# 2.8  NẠP DỮ LIỆU ĐÃ CHUẨN HÓA CHO BƯỚC ĐỊNH TUYẾN (Routing Flexible Input)
-# ============================================================================
 def read_matrix(path: str) -> pd.DataFrame:
     df = read_dim_file(path, index_col=0).copy()
     df.index, df.columns = df.index.astype(str), df.columns.astype(str)
@@ -679,7 +627,6 @@ def load_data_flexible(cfg: Config, source_df: pd.DataFrame = None) -> dict:
             "cust": load_customers(cfg), "warehouses": warehouses, "orders": orders, "notes": notes}
 
 
-# Compatible alias function for legacy imports
 def load_orders(cfg: Config, notes: list) -> list:
     orders, n_notes = load_orders_flexible(cfg)
     notes.extend(n_notes)
@@ -690,9 +637,6 @@ def load_data(cfg: Config) -> dict:
     return load_data_flexible(cfg)
 
 
-# ============================================================================
-# 2.9  KIỂM TRA FILE ĐẦU VÀO TRƯỚC KHI CHẠY ĐỊNH TUYẾN
-# ============================================================================
 def require_files(cfg: Config, which):
     labels = {
         "orders": (cfg.order_file, "Tab 4 (Đơn hàng)"),
