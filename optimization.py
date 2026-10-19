@@ -515,8 +515,9 @@ def simulate_all(data: dict, cfg: Config = CFG):
     days = {d: planner.plan_day(d, by_date[d]) for d in sorted(by_date)}
     all_r = [r for d in days.values() for r in d["routes"] + d["overdue_routes"]]
 
-    valid_routes_for_load = [r for r in all_r if (not r["external"]) or ("FULL" in str(r.get("vehicle_id", "")).upper())]
-    avg_load_factor = (sum(r["load_factor"] for r in valid_routes_for_load) / len(valid_routes_for_load)) if valid_routes_for_load else 0.0
+    # 🌟 TÍNH TỈ LỆ LẤP ĐẦY TRUNG BÌNH CHỈ TRÊN XE NHÀ 🌟
+    inhouse_only_routes = [r for r in all_r if not r["external"]]
+    avg_load_factor = (sum(r["load_factor"] for r in inhouse_only_routes) / len(inhouse_only_routes)) if inhouse_only_routes else 0.0
 
     delivered = {o["order_id"] for r in all_r for o in r["orders"]}
     n_routes = len(all_r)
