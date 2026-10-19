@@ -9,7 +9,7 @@ TRƯỚC khi import các module giao diện. (config.py không import streamlit 
 """
 import streamlit as st
 
-from smart_logistics.config import PAGE_CONFIG
+from config.py import PAGE_CONFIG
 
 st.set_page_config(**PAGE_CONFIG)
 
