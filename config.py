@@ -2,30 +2,22 @@
 """
 PHẦN 1 — CONFIGURATION
 ======================
-Toàn bộ hằng số, đường dẫn thư mục, schema cột dữ liệu và tham số mô hình.
-
-Quy ước: module này KHÔNG import streamlit / pandas, nên có thể nạp trước mọi
-thứ khác (ví dụ để gọi ``st.set_page_config(**PAGE_CONFIG)`` đầu tiên trong app.py).
 """
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
 
-# ============================================================================
-# 1.1  TRANG & HẰNG SỐ GIAO DIỆN
-# ============================================================================
+# 1.1 TRANG & HẰNG SỐ GIAO DIỆN
 PAGE_CONFIG = {"page_title": "Smart Logistics Dashboard", "page_icon": "🚚", "layout": "wide"}
 
 NONE = "-- Không sử dụng --"
 INPUT_MODES = ["Nhập trực tiếp (Data Editor)", "Upload file Excel/CSV/JSON"]
 UPLOAD_TYPES = ["xlsx", "xls", "xlsm", "csv", "json"]
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-VIETNAM_BOUNDS = (8.0, 24.5, 102.0, 110.0)  # (lat_min, lat_max, lng_min, lng_max)
+VIETNAM_BOUNDS = (8.0, 24.5, 102.0, 110.0)
 
-# ============================================================================
-# 1.2  ĐƯỜNG DẪN LƯU DỮ LIỆU CHUẨN HÓA
-# ============================================================================
+# 1.2 ĐƯỜNG DẪN LƯU DỮ LIỆU CHUẨN HÓA
 BASE_DIR = os.getcwd()
 OUT_FLEET = os.path.join(BASE_DIR, "output_fleet")
 OUT_WAREHOUSE = os.path.join(BASE_DIR, "output_warehouse")
@@ -35,9 +27,7 @@ OUT_SOLVING = os.path.join(BASE_DIR, "output_solving")
 OUT_CUSTOMER = os.path.join(BASE_DIR, "output_customer")
 OUT_MATRIX = os.path.join(BASE_DIR, "output_matrix")
 
-# ============================================================================
-# 1.3  HẰNG SỐ NGHIỆP VỤ
-# ============================================================================
+# 1.3 HẰNG SỐ NGHIỆP VỤ
 LICENSE_RANKS = {
     "A1": 1, "A2": 2, "A3": 3, "A4": 4,
     "B1": 5, "B2": 6,
@@ -48,17 +38,11 @@ LICENSE_RANKS = {
 LICENSE_LIST = list(LICENSE_RANKS.keys())
 
 
-# ============================================================================
-# 1.4  NGOẠI LỆ DÙNG CHUNG
-# ============================================================================
 class UserError(Exception):
-    """Lỗi do người dùng (thiếu file, thiếu dữ liệu...) — hiển thị thẳng lên UI."""
+    """Lỗi do người dùng."""
 
 
-# ============================================================================
-# 1.5  SCHEMA DỮ LIỆU (tên cột chuẩn + các alias để semantic mapping)
-# ============================================================================
-# --- Fleet -------------------------------------------------------------------
+# 1.5 SCHEMA DỮ LIỆU
 VEHICLE_FIELDS = {
     "vehicle_id": ["mã xe", "vehicle id", "vehicle code", "vehicle", "xe", "id xe", "truck id"],
     "license_plate": ["biển số", "bien so", "bsx", "license plate", "plate", "số xe"],
@@ -72,13 +56,11 @@ VEHICLE_FIELDS = {
 }
 VEHICLE_NUMERIC = ["max_weight_kg", "max_volume_m3", "average_speed_kmh", "Max_Distance", "fixed_cost", "variable_cost"]
 
-# --- Warehouse ---------------------------------------------------------------
 WAREHOUSE_FIELDS = {
     "id_warehouse": ["mã kho", "warehouse id", "warehouse code", "warehouse", "kho", "id kho"],
     "address": ["địa chỉ", "địa điểm", "address", "location", "vị trí"],
 }
 
-# --- Product (Cập nhật Kích thước 3D & Thể tích) -----------------------------
 PRODUCT_FIELDS = {
     "product_id": ["mã sản phẩm", "product id", "sku", "item code", "mã sp", "code", "id"],
     "product_name": ["tên sản phẩm", "product name", "item name", "tên sp", "name"],
@@ -91,7 +73,6 @@ PRODUCT_FIELDS = {
 }
 PRODUCT_NUMERIC = ["length_cm", "width_cm", "height_cm", "weight", "cost_price", "selling_price"]
 
-# --- Orders ------------------------------------------------------------------
 _ORDER_RAW = {
     "order_id": dict(aliases=["mã đơn", "order id", "order code"]),
     "customer_id": dict(aliases=["mã khách", "customer id"]),
@@ -113,9 +94,6 @@ FIELDS = list(ORDER_FIELDS)
 TYPE_TABLE = {"B2C": ["b2c", "cá nhân", "lẻ"], "B2B": ["b2b", "doanh nghiệp", "sỉ"]}
 ALERT_TABLE = {"Alert": ["alert", "khẩn", "gấp"], "Normal": ["normal", "bình thường"]}
 
-# ============================================================================
-# 1.6  NGƯỠNG THUÊ NGOÀI 3PL (mặc định)
-# ============================================================================
 OC_DEFAULTS = {
     "saving_1_price": 800_000.0, "saving_2_price": 300_000.0,
     "tier2_max_w": 20.0, "tier2_max_v": 1.0,
@@ -124,9 +102,6 @@ OC_DEFAULTS = {
 }
 
 
-# ============================================================================
-# 1.7  CẤU HÌNH CHẠY (tham số mô hình định tuyến + đường dẫn file đầu vào)
-# ============================================================================
 @dataclass
 class Config:
     start_time: str = "08:30"
