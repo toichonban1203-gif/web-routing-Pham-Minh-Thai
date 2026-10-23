@@ -23,6 +23,7 @@ from config import (
     ALERT_TABLE, BASE_DIR, FIELDS, INPUT_MODES, NONE, PRODUCT_NUMERIC,
     PRODUCT_FIELDS, OUT_SOLVING, TYPE_TABLE, VEHICLE_NUMERIC,
     VIETNAM_BOUNDS, Config, UserError,
+    **SHIFT_MAPPING_KEYWORDS**
 )
 from optimization import haversine
 
@@ -110,6 +111,15 @@ def parse_date_iso(dstr: str) -> str:
         if pd.notna(parsed): return parsed.strftime("%Y-%m-%d")
     except Exception: pass
     return ""
+
+
+**def normalize_shift(val):**
+    **if is_blank(val): return "Ca Sáng"**
+    **val_str = str(val).strip().lower()**
+    **for std_shift, keywords in SHIFT_MAPPING_KEYWORDS.items():**
+        **if any(kw in val_str for kw in keywords):**
+            **return std_shift**
+    **return str(val).strip().title()**
 
 
 def _read_csv_bytes(data: bytes) -> pd.DataFrame:
@@ -415,6 +425,7 @@ def process_order_with_geocode(raw, do_geocode=True):
     q = parse_qty(raw.get("quantity"))
     w = parse_qty(raw.get("total_weight_kg"))
     v = parse_qty(raw.get("total_volume_m3"), dot_is_decimal=True)
+    **shift_val = normalize_shift(raw.get("shift"))**
 
     addr = str(raw.get("address", "")).strip()
     cleaned_addr = clean_address(addr)
@@ -441,6 +452,7 @@ def process_order_with_geocode(raw, do_geocode=True):
         "items": items_str,
         "total_weight_kg": round(w or 0.0, 4),
         "total_volume_m3": round(v or 0.0, 6),
+        **"shift": shift_val,**
         "address": cleaned_addr,
         "province": province,
         "lat": lat,
@@ -592,12 +604,14 @@ def load_orders_flexible(cfg: Config, source_df: pd.DataFrame = None) -> tuple[l
         items_str = "" if is_blank(r.get("items")) else str(r["items"]).strip()
         province_str = "" if is_blank(r.get("province")) else str(r["province"]).strip()
         bbs_code = "" if is_blank(r.get("BBS_code")) else str(r["BBS_code"]).strip()
+        **shift_val = normalize_shift(r.get("shift"))**
 
         orders.append({
             "order_id": oid, "customer_id": cid, "order_type": otype if otype in ("B2B", "B2C") else "B2C",
             "quantity": qty,
             "items": items_str or "SP_01",
             "total_weight_kg": parse_qty(r.get("total_weight_kg")), "total_volume_m3": parse_qty(r.get("total_volume_m3"), dot_is_decimal=True),
+            **"shift": shift_val,**
             "address": "" if is_blank(r.get("address")) else str(r["address"]),
             "province": province_str,
             "BBS_code": bbs_code,
