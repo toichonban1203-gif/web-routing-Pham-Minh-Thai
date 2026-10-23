@@ -81,6 +81,7 @@ _ORDER_RAW = {
     "items": dict(aliases=["mặt hàng", "items", "product", "sản phẩm"]),
     "total_weight_kg": dict(aliases=["trọng lượng", "weight", "kg"]),
     "total_volume_m3": dict(aliases=["thể tích", "volume", "m3"]),
+    "shift": dict(aliases=["shift", "ca", "kíp", "buổi", "ca giao", "ca làm việc", "buổi giao"]),
     "address": dict(aliases=["địa chỉ", "address", "destination", "location", "vị trí"]),
     "province": dict(aliases=["tỉnh", "thành phố", "province", "tỉnh/thành"]),
     "order_status": dict(aliases=["trạng thái", "status"]),
@@ -93,6 +94,12 @@ FIELDS = list(ORDER_FIELDS)
 
 TYPE_TABLE = {"B2C": ["b2c", "cá nhân", "lẻ"], "B2B": ["b2b", "doanh nghiệp", "sỉ"]}
 ALERT_TABLE = {"Alert": ["alert", "khẩn", "gấp"], "Normal": ["normal", "bình thường"]}
+
+SHIFT_MAPPING_KEYWORDS = {
+    "Ca Sáng": ["sáng", "ca sáng", "morning", "ca 1", "am", "shift 1"],
+    "Ca Chiều": ["chiều", "ca chiều", "afternoon", "ca 2", "pm", "shift 2"],
+    "Ca Đêm": ["đêm", "ca đêm", "night", "ca 3", "shift 3"]
+}
 
 OC_DEFAULTS = {
     "saving_1_price": 800_000.0, "saving_2_price": 300_000.0,
